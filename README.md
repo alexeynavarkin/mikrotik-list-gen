@@ -99,7 +99,22 @@ docker run -d --name ru-list -p 8080:8080 --restart unless-stopped ru-list-serve
 ```
 
 Образ — multi-stage на distroless, статический бинарь (`CGO_ENABLED=0`),
-запуск от непривилегированного пользователя.
+запуск от непривилегированного пользователя. В образ встроен `HEALTHCHECK` —
+бинарь сам опрашивает свой `/healthz` (`-healthcheck`), т.к. в distroless нет
+shell/curl.
+
+### Docker Compose
+
+Самый быстрый старт:
+
+```sh
+docker compose up -d        # тянет образ из ghcr.io
+docker compose up -d --build  # или собрать локально
+docker compose logs -f
+```
+
+`docker-compose.yml` поднимает сервис на `:8080`, с `restart: unless-stopped` и
+healthcheck-ом. Поменять порт/интервал — в `ports`/`command`.
 
 ### systemd (на VPS)
 

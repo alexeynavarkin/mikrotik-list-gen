@@ -16,4 +16,7 @@ LABEL org.opencontainers.image.licenses="MIT"
 COPY --from=build /ru-list-server /ru-list-server
 EXPOSE 8080
 USER nonroot:nonroot
+# The binary probes itself — distroless has no shell/curl.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["/ru-list-server", "-healthcheck"]
 ENTRYPOINT ["/ru-list-server"]

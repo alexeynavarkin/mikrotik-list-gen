@@ -17,6 +17,7 @@ import (
 	"math/bits"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,7 +64,13 @@ type server struct {
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	refresh := flag.Duration("refresh", 24*time.Hour, "background refresh interval")
+	healthcheck := flag.Bool("healthcheck", false, "probe local /healthz and exit (for container HEALTHCHECK); uses -addr")
 	flag.Parse()
+
+	// Self-probe mode for distroless containers (no shell/curl available).
+	if *healthcheck {
+		os.Exit(runHealthcheck(*addr))
+	}
 
 	srv := &server{
 		client: &http.Client{Timeout: httpTimeout},
@@ -415,4 +422,31 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"updated_at":  st.updated.Format(time.RFC3339),
 		"age_seconds": int(time.Since(st.updated).Seconds()),
 	})
+}
+
+// runHealthcheck probes the local /healthz endpoint and returns a process exit
+// code (0 = healthy). It derives the target from the listen address, mapping a
+// wildcard/empty host to 127.0.0.1. Used as the container HEALTHCHECK command.
+func runHealthcheck(addr string) int {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = "", addr // tolerate a bare ":8080"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	url := fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, port))
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "healthcheck: status", resp.Status)
+		return 1
+	}
+	return 0
 }
