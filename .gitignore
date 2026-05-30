@@ -1,0 +1,12 @@
+# Binaries
+/ru-list-server
+*.exe
+
+# Test / build artifacts
+*.out
+/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
