@@ -1,16 +1,17 @@
 services:
-  ru-list:
+  geoip-list:
     # Pull the published image. Run `docker compose up --build` to build locally instead.
     image: ghcr.io/alexeynavarkin/mikrotik-list-gen:latest
     build: .
-    container_name: ru-list
+    container_name: geoip-list
     restart: unless-stopped
-    command: ["-addr", ":8080", "-refresh", "24h"]
+    # Add/remove country codes here (comma-separated ISO 3166-1 alpha-2).
+    command: ["-addr", ":8080", "-refresh", "24h", "-countries", "ru,by,kz"]
     ports:
       - "8080:8080"
     # The image ships a self-probing HEALTHCHECK; this just tunes the timings.
     healthcheck:
-      test: ["CMD", "/ru-list-server", "-healthcheck"]
+      test: ["CMD", "/geoip-list-server", "-healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 20s

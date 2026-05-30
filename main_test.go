@@ -21,7 +21,7 @@ func TestParseRIPE(t *testing.T) {
 		"garbage line without pipes",
 	}, "\n")
 
-	v4, v6, err := parseRIPE(strings.NewReader(input))
+	v4, v6, err := parseRIPE(strings.NewReader(input), "ru")
 	if err != nil {
 		t.Fatalf("parseRIPE: %v", err)
 	}
@@ -87,18 +87,17 @@ func TestParseZone(t *testing.T) {
 
 func TestRenderRSC(t *testing.T) {
 	ts := time.Date(2026, 5, 30, 14, 30, 0, 0, time.UTC)
-	out := string(renderRSC(ts,
-		section{v4Prefix, []string{"2.56.88.0/22", "5.8.8.0/21"}},
+	out := string(renderRSC("by", ts,
+		section{v4Prefix, []string{"5.8.8.0/21"}},
 		section{v6Prefix, []string{"2a00:1118::/29"}},
 	))
 
 	want := strings.Join([]string{
-		"# auto-generated 2026-05-30T14:30:00Z, entries=3",
-		`/ip firewall address-list remove [find list=RU comment="ru-auto"]`,
-		`/ip firewall address-list add list=RU address=2.56.88.0/22 comment="ru-auto"`,
-		`/ip firewall address-list add list=RU address=5.8.8.0/21 comment="ru-auto"`,
-		`/ipv6 firewall address-list remove [find list=RU comment="ru-auto"]`,
-		`/ipv6 firewall address-list add list=RU address=2a00:1118::/29 comment="ru-auto"`,
+		"# auto-generated 2026-05-30T14:30:00Z, country=BY, entries=2",
+		`/ip firewall address-list remove [find list=BY comment="by-auto"]`,
+		`/ip firewall address-list add list=BY address=5.8.8.0/21 comment="by-auto"`,
+		`/ipv6 firewall address-list remove [find list=BY comment="by-auto"]`,
+		`/ipv6 firewall address-list add list=BY address=2a00:1118::/29 comment="by-auto"`,
 		"",
 	}, "\n")
 
@@ -109,7 +108,7 @@ func TestRenderRSC(t *testing.T) {
 
 func TestRenderRSCSkipsEmptySection(t *testing.T) {
 	ts := time.Date(2026, 5, 30, 14, 30, 0, 0, time.UTC)
-	out := string(renderRSC(ts,
+	out := string(renderRSC("ru", ts,
 		section{v4Prefix, []string{"2.56.88.0/22"}},
 		section{v6Prefix, nil},
 	))
@@ -118,6 +117,36 @@ func TestRenderRSCSkipsEmptySection(t *testing.T) {
 	}
 	if !strings.Contains(out, "entries=1") {
 		t.Errorf("expected entries=1, got:\n%s", out)
+	}
+}
+
+func TestParseCountries(t *testing.T) {
+	got, err := parseCountries(" RU, by ,kz, ru,")
+	if err != nil {
+		t.Fatalf("parseCountries: %v", err)
+	}
+	want := []string{"ru", "by", "kz"} // lowercased, de-duped, order preserved
+	if !equalSlice(got, want) {
+		t.Errorf("parseCountries = %v, want %v", got, want)
+	}
+
+	for _, bad := range []string{"", ",", "rus", "r", "r1", "12"} {
+		if _, err := parseCountries(bad); err == nil {
+			t.Errorf("parseCountries(%q) expected error", bad)
+		}
+	}
+}
+
+func TestValidCC(t *testing.T) {
+	for _, ok := range []string{"ru", "by", "us", "cn"} {
+		if !validCC(ok) {
+			t.Errorf("validCC(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "r", "rus", "RU", "r1", "..", "/r"} {
+		if validCC(bad) {
+			t.Errorf("validCC(%q) = true, want false", bad)
+		}
 	}
 }
 
