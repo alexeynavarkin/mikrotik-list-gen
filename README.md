@@ -101,10 +101,8 @@
 ...
 ```
 
-> ⚠️ Между `remove` и завершением всех `add` адрес-лист в RouterOS какое-то время
-> (≈10–30 с на больших списках) неконсистентен — часть подсетей временно
-> отсутствует. Для суточного обновления split-tunnel это приемлемо; если нет —
-> импортируйте во временный лист и переключайте правила атомарно.
+Имя листа и маркер выводятся из кода страны (см. раздел про MikroTik), поэтому
+несколько стран импортируются в разные листы независимо.
 
 ## Запуск
 
@@ -169,25 +167,96 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now geoip-list-server
 ```
 
-## Потребление на MikroTik
+## Настройка на MikroTik (RouterOS 7)
 
-MikroTik не умеет тянуть address-list по URL напрямую (у `address-list` нет
-параметра `url` — проверено по официальной документации). Работает только связка
-`/tool fetch` + `/import`. Пример для одной страны (RU):
+MikroTik не умеет тянуть address-list по URL напрямую (у `/ip firewall
+address-list` нет параметра `url`). Рабочая связка — `/tool fetch` (скачать файл
+в файловую систему роутера) + `/import` (выполнить его как скрипт). Команды ниже
+вводятся в терминале (WinBox → **New Terminal**, либо SSH). Замените
+`SERVER:8080` на адрес вашего сервиса.
+
+### Параметры команд (по [официальной спеке](https://help.mikrotik.com/docs/spaces/ROS/pages/8978514/Fetch))
+
+- `/tool fetch` — `url=`, `mode=` (`http`|`https`|`ftp`|`sftp`|`tftp`),
+  `dst-path=` (куда сохранить в ФС роутера), `output=file` (явно «писать в файл»),
+  `check-certificate=` (`no` по умолчанию, для HTTPS — `yes`).
+- `/import file-name=` — выполняет `.rsc` как набор консольных команд. Можно
+  добавить `verbose=yes` для остановки на первой ошибке (удобно при отладке).
+
+### Вариант 1. Одна страна (RU), по HTTP
 
 ```routeros
-/system script add name=update-ru-list source={
+/system script
+add name="geoip-ru-update" policy=read,write,ftp,test source={
     :do {
-        /tool fetch url="http://<host>:8080/ru.rsc" mode=http dst-path=ru.rsc
-        /import file-name=ru.rsc
-    } on-error={ :log error "RU list update failed" }
+        /tool fetch url="http://SERVER:8080/ru.rsc" mode=http dst-path="ru.rsc" output=file;
+        /import file-name="ru.rsc";
+        /file remove [find name="ru.rsc"];
+    } on-error={
+        :log error "geoip-ru-update: fetch/import failed";
+    }
 }
-/system scheduler add name=update-ru-daily start-time=04:00:00 interval=1d \
-    on-event="/system script run update-ru-list"
+
+/system scheduler
+add name="geoip-ru-daily" interval=1d start-time=04:00:00 \
+    policy=read,write,ftp,test on-event="/system script run geoip-ru-update"
 ```
 
-Для нескольких стран заведите по скрипту на каждый код (`/by.rsc`, `/kz.rsc`, …) —
-каждый импортируется в свой лист (`BY`, `KZ`, …).
+`policy=read,write,ftp,test` нужна и скрипту, и шедулеру: `read`/`ftp` — для
+`fetch`, `write`/`test` — чтобы `import` мог менять конфигурацию. Без этого
+шедулер молча не применит изменения.
+
+### Вариант 2. Несколько стран одним скриптом
+
+Имена файлов и листов выводятся из кода страны (`/ru.rsc` → лист `RU`,
+`/by.rsc` → `BY`, …), поэтому импорт одной страны не задевает другие:
+
+```routeros
+/system script
+add name="geoip-update" policy=read,write,ftp,test source={
+    :local host "SERVER:8080";
+    :foreach cc in={"ru";"by";"kz"} do={
+        :do {
+            /tool fetch url=("http://" . $host . "/" . $cc . ".rsc") \
+                mode=http dst-path=($cc . ".rsc") output=file;
+            /import file-name=($cc . ".rsc");
+            /file remove [find name=($cc . ".rsc")];
+        } on-error={
+            :log error ("geoip-update: " . $cc . " failed");
+        }
+    }
+}
+
+/system scheduler
+add name="geoip-daily" interval=1d start-time=04:00:00 \
+    policy=read,write,ftp,test on-event="/system script run geoip-update"
+```
+
+### Вариант 3. HTTPS
+
+Если сервис за TLS, используйте `mode=https`. С `check-certificate=yes` корневой
+CA должен быть в хранилище роутера (`/certificate`); для Let's Encrypt при
+актуальной прошивке он обычно уже есть. Если проверку отключить —
+`check-certificate=no` (трафик шифруется, но MITM не отлавливается):
+
+```routeros
+/tool fetch url="https://SERVER/ru.rsc" mode=https check-certificate=yes \
+    dst-path="ru.rsc" output=file;
+```
+
+### Проверка
+
+Запустите вручную и убедитесь, что записи появились:
+
+```routeros
+/system script run geoip-ru-update
+/ip firewall address-list print count-only where list=RU
+/ipv6 firewall address-list print count-only where list=RU
+```
+
+> ⚠️ Между `remove` и завершением всех `add` внутри одного `import` лист какое-то
+> время неконсистентен (≈10–30 с на больших списках) — часть подсетей временно
+> отсутствует. Для суточного обновления split-tunnel это приемлемо.
 
 ## Тесты
 
